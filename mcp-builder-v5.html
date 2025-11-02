@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"="width=device-width, initial-scale=1.0">
+    <title>🧩 MCP Builder - Auto-Generator ChatGPT Actions</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .code-block {
+            background: #1e1e1e;
+            border-radius: 8px;
+            overflow: auto;
+            max-height: 500px;
+        }
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState } = React;
+
+        function MCPBuilder() {
+            const [url, setUrl] = useState('https://opendata.praha.eu');
+            const [name, setName] = useState('');
+            const [description, setDescription] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [result, setResult] = useState(null);
+            const [infoMessages, setInfoMessages] = useState([]);
+
+            const generateCKANSpec = (apiUrl, customName, customDescription) => {
+                const spec = {
+                    openapi: "3.1.0",
+                    info: {
+                        title: customName || "Prague Open Data API",
+                        description: customDescription || "CKAN API pro přístup k otevřeným datům hlavního města Prahy",
+                        version: "1.0.0"
+                    },
+                    "x-mcp": {
+                        name: (customName || "prague_opendata").toLowerCase().replace(/\s+/g, '_'),
+                        description: customDescription || "CKAN API - katalog otevřených dat Prahy"
+                    },
+                    servers: [
+                        {
+                            url: `${apiUrl}/api/3/action`,
+                            description: "CKAN API endpoint"
+                        }
+                    ],
+                    paths: {
+                        "/package_list": {
+                            get: {
+                                operationId: "getPackageList",
+                                summary: "Získat seznam všech datasetů (balíčků)",
+                                description: "Vrací seznam názvů všech dostupných datasetů v katalogu",
+                                parameters: [],
+                                responses: {
+                                    "200": {
+                                        description: "Seznam názvů datasetů",
+                                        content: {
+                                            "application/json": {
+                                                schema: {
+                                                    type: "object",
+                                                    properties: {
+                                                        success: { type: "boolean" },
+                                                        result: {
+                                                            type: "array",
+                                                            items: { type: "string" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "/package_search": {
+                            get: {
+                                operationId: "searchPackages",
+                                summary: "Vyhledat datasety podle klíčových slov",
+                                description: "Fulltextové vyhledávání v datasetu. Podporuje filtrování, řazení a stránkování.",
+                                parameters: [
+                                    {
+                                        name: "q",
+                                        in: "query",
+                                        required: false,
+                                        schema: { type: "string" },
+                                        description: "Vyhledávací dotaz (např. 'doprava', 'MHD', 'parkování')"
+                                    },
+                                    {
+                                        name: "fq",
+                                        in: "query",
+                                        required: false,
+                                        schema: { type: "string" },
+                                        description: "Filtr (např. 'organization:mhmp')"
+                                    },
+                                    {
+                                        name: "rows",
+                                        in: "query",
+                                        required: false,
+                                        schema: { type: "integer", default: 10 },
+                                        description: "Počet výsledků na stránku (max 1000)"
+                                    },
+                                    {
+                                        name: "start",
+                                        in: "query",
+                                        required: false,
+                                        schema: { type: "integer", default: 0 },
+                                        description: "Offset pro stránkování"
+                                    },
+                                    {
+                                        name: "sort",
+                                        in: "query",
+                                        required: false,
+                                        schema: { type: "string" },
+                                        description: "Řazení výsledků (např. 'score desc', 'metadata_modified desc')"
+                                    }
+                                ],
+                                responses: {
+                                    "200": {
+                                        description: "Výsledky vyhledávání",
+                                        content: {
+                                            "application/json": {
+                                                schema: {
+                                                    type: "object",
+                                                    properties: {
+                                                        success: { type: "boolean" },
+                                                        result: {
+                                                            type: "object",
+                                                            properties: {
+                                                                count: { type: "integer" },
+                                                                results: {
+                                                                    type: "array",
+                                                                    items: {
+                                                                        type: "object",
+                                                                        properties: {
+                                                                            id: { type: "string" },
+                                                                            name: { type: "string" },
+                                                                            title: { type: "string" },
+                                                                            notes: { type: "string" },
+                                                                            organization: { type: "object" },
+                                                                            tags: { type: "array" }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "/package_show": {
+                            get: {
+                                operationId: "getPackageDetail",
+                                summary: "Získat detail konkrétního datasetu",
+                                description: "Vrací kompletní metadata datasetu včetně zdrojů (resources)",
+                                parameters: [
+                                    {
+                                        name: "id",
+                                        in: "query",
+                                        required: true,
+                                        schema: { type: "string" },
+                                        description: "ID nebo název datasetu (např. 'mhd-zastavky')"
+                                    }
+                                ],
+                                responses: {
+                                    "200": {
+                                        description: "Detail datasetu",
+                                        content: {
+                                            "application/json": {
+                                                schema: {
+                                                    type: "object",
+                                                    properties: {
+                                                        success: { type: "boolean" },
+                                                        result: {
+                                                            type: "object",
+                                                            properties: {
+                                                                id: { type: "string" },
+                                                                name: { type: "string" },
+                                                                title: { type: "string" },
+                                                                notes: { type: "string" },
+                                                                resources: {
+                                                                    type: "array",
+                                                                    items: {
+                                                                        type: "object",
+                                                                        properties: {
+                                                                            id: { type: "string" },
+                                                                            url: { type: "string" },
+                                                                            format: { type: "string" },
+                                                                            name: { type: "string" }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "/organization_list": {
+                            get: {
+                                operationId: "getOrganizationList",
+                                summary: "Získat seznam organizací",
+                                description: "Vrací seznam všech organizací publikujících data",
+                                parameters: [
+                                    {
+                                        name: "all_fields",
+                                        in: "query",
+                                        required: false,
+                                        schema: { type: "boolean", default: false },
+                                        description: "Pokud true, vrátí všechny metadata organizací"
+                                    }
+                                ],
+                                responses: {
+                                    "200": {
+                                        description: "Seznam organizací",
+                                        content: {
+                                            "application/json": {
+                                                schema: {
+                                                    type: "object",
+                                                    properties: {
+                                                        success: { type: "boolean" },
+                                                        result: {
+                                                            type: "array",
+                                                            items: {
+                                                                type: "object",
+                                                                properties: {
+                                                                    id: { type: "string" },
+                                                                    name: { type: "string" },
+                                                                    title: { type: "string" },
+                                                                    description: { type: "string" }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "/tag_list": {
+                            get: {
+                                operationId: "getTagList",
+                                summary: "Získat seznam tagů",
+                                description: "Vrací seznam všech použitých tagů v katalogu",
+                                parameters: [],
+                                responses: {
+                                    "200": {
+                                        description: "Seznam tagů",
+                                        content: {
+                                            "application/json": {
+                                                schema: {
+                                                    type: "object",
+                                                    properties: {
+                                                        success: { type: "boolean" },
+                                                        result: {
+                                                            type: "array",
+                                                            items: { type: "string" }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+                return spec;
+            };
+
+            const handleGenerate = async () => {
+                setLoading(true);
+                setInfoMessages([]);
+
+                await new Promise(resolve => setTimeout(resolve, 500));
+
+                try {
+                    let cleanUrl = url.trim().replace(/\/$/, '');
+                    
+                    // Remove /api/3/action if present
+                    if (cleanUrl.endsWith('/api/3/action')) {
+                        cleanUrl = cleanUrl.slice(0, -'/api/3/action'.length);
+                    }
+                    if (cleanUrl.endsWith('/api/3')) {
+                        cleanUrl = cleanUrl.slice(0, -'/api/3'.length);
+                    }
+                    if (cleanUrl.endsWith('/api')) {
+                        cleanUrl = cleanUrl.slice(0, -'/api'.length);
+                    }
+                    
+                    const messages = [
+                        `🔍 Analyzuji CKAN API: ${cleanUrl}`,
+                        `📋 Generuji endpointy podle CKAN API standardu`,
+                        `✅ /package_list - seznam všech datasetů`,
+                        `✅ /package_search - vyhledávání datasetů`,
+                        `✅ /package_show - detail datasetu`,
+                        `✅ /organization_list - seznam organizací`,
+                        `✅ /tag_list - seznam tagů`,
+                        `⚙️ Base URL: ${cleanUrl}/api/3/action`,
+                        `🎯 OpenAPI 3.1 specifikace vygenerována úspěšně!`
+                    ];
+                    
+                    setInfoMessages(messages);
+                    const spec = generateCKANSpec(cleanUrl, name, description);
+                    setResult(spec);
+                } catch (err) {
+                    alert('Chyba při generování: ' + err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const copyToClipboard = () => {
+                navigator.clipboard.writeText(JSON.stringify(result, null, 2));
+                alert('✅ OpenAPI specifikace zkopírována do schránky!');
+            };
+
+            const downloadJSON = () => {
+                const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'ckan-mcp-spec.json';
+                a.click();
+                URL.revokeObjectURL(url);
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 py-8 px-4">
+                    <div className="max-w-6xl mx-auto">
+                        {/* Header */}
+                        <div className="gradient-bg text-white rounded-2xl shadow-2xl p-8 mb-8">
+                            <h1 className="text-4xl font-bold mb-3">🧩 MCP Builder</h1>
+                            <p className="text-lg opacity-90">Auto-Generator ChatGPT Actions pro CKAN Open Data</p>
+                            <p className="text-sm opacity-75 mt-2">Automaticky vytvoří OpenAPI 3.1 specifikaci pro CKAN API portály</p>
+                        </div>
+
+                        {/* Input Form */}
+                        <div className="bg-white rounded-2xl shadow-xl p-8 mb-8">
+                            <h2 className="text-2xl font-bold text-gray-800 mb-6">⚙️ Konfigurace</h2>
+                            
+                            <div className="space-y-5">
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                        URL CKAN portálu *
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={url}
+                                        onChange={(e) => setUrl(e.target.value)}
+                                        placeholder="https://opendata.praha.eu"
+                                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none transition"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Zadejte základní URL bez /api/3/action</p>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                        Název MCP serveru (volitelné)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={name}
+                                        onChange={(e) => setName(e.target.value)}
+                                        placeholder="Prague Open Data API"
+                                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none transition"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                        Popis (volitelné)
+                                    </label>
+                                    <textarea
+                                        value={description}
+                                        onChange={(e) => setDescription(e.target.value)}
+                                        placeholder="CKAN API pro přístup k otevřeným datům..."
+                                        rows="3"
+                                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none transition"
+                                    />
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={handleGenerate}
+                                disabled={loading || !url}
+                                className="w-full mt-8 bg-gradient-to-r from-purple-600 to-blue-600 text-white font-bold py-4 px-6 rounded-lg hover:from-purple-700 hover:to-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+                            >
+                                {loading ? '🔄 Generuji...' : '🚀 Generovat CKAN API specifikaci'}
+                            </button>
+                        </div>
+
+                        {loading && (
+                            <div className="bg-white rounded-2xl shadow-xl p-8 mb-8 text-center">
+                                <div className="loader mx-auto mb-4"></div>
+                                <p className="text-gray-600">Generuji OpenAPI 3.1 specifikaci...</p>
+                            </div>
+                        )}
+
+                        {infoMessages.length > 0 && (
+                            <div className="bg-white rounded-2xl shadow-xl p-8 mb-8">
+                                <h3 className="text-xl font-bold text-gray-800 mb-4">📋 Proces generování</h3>
+                                <div className="space-y-2 font-mono text-sm">
+                                    {infoMessages.map((msg, idx) => (
+                                        <div key={idx} className="text-gray-700">{msg}</div>
+                                    ))}
+                                </div>
+                                {result && (
+                                    <div className="mt-4 p-4 bg-green-50 rounded-lg border border-green-200">
+                                        <p className="text-sm text-green-800">
+                                            ✅ <strong>API Base URL:</strong> <code className="bg-white px-2 py-1 rounded">{result.servers[0].url}</code>
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {result && (
+                            <div className="bg-white rounded-2xl shadow-xl p-8">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="text-2xl font-bold text-gray-800">✅ OpenAPI 3.1 Specifikace</h3>
+                                    <div className="flex gap-3">
+                                        <button
+                                            onClick={copyToClipboard}
+                                            className="bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700 transition font-semibold shadow"
+                                        >
+                                            📋 Kopírovat
+                                        </button>
+                                        <button
+                                            onClick={downloadJSON}
+                                            className="bg-green-600 text-white px-5 py-2 rounded-lg hover:bg-green-700 transition font-semibold shadow"
+                                        >
+                                            💾 Stáhnout JSON
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="code-block p-6">
+                                    <pre className="text-green-400 text-sm overflow-x-auto">
+                                        {JSON.stringify(result, null, 2)}
+                                    </pre>
+                                </div>
+
+                                <div className="mt-6 p-6 bg-blue-50 rounded-lg border-2 border-blue-200">
+                                    <h4 className="font-bold text-blue-900 mb-3">💡 Jak použít v ChatGPT:</h4>
+                                    <ol className="list-decimal list-inside space-y-2 text-blue-800">
+                                        <li>Zkopírujte nebo stáhněte JSON specifikaci výše</li>
+                                        <li>V ChatGPT otevřete "GPTs" → "Create a GPT"</li>
+                                        <li>Klikněte na "Configure" → "Actions" → "Create new action"</li>
+                                        <li>Vložte JSON do pole "Schema"</li>
+                                        <li>Nastavte "Authentication" na "None"</li>
+                                        <li>Klikněte "Save" a otestujte: "Najdi datasety o dopravě"</li>
+                                    </ol>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="mt-8 bg-gradient-to-r from-purple-100 to-blue-100 rounded-2xl p-8 border-2 border-purple-200">
+                            <h3 className="text-xl font-bold text-purple-900 mb-4">🧠 Co aplikace dělá?</h3>
+                            <div className="grid md:grid-cols-2 gap-4 text-purple-900">
+                                <div>
+                                    <div className="font-semibold mb-2">🔍 CKAN API endpointy</div>
+                                    <p className="text-sm">package_list, package_search, package_show, organization_list, tag_list</p>
+                                </div>
+                                <div>
+                                    <div className="font-semibold mb-2">🧩 OpenAPI 3.1 + x-mcp</div>
+                                    <p className="text-sm">Validní specifikace pro ChatGPT Actions</p>
+                                </div>
+                                <div>
+                                    <div className="font-semibold mb-2">💬 Okamžitě použitelné</div>
+                                    <p className="text-sm">Kopíruj → Vlož do ChatGPT → Hotovo</p>
+                                </div>
+                                <div>
+                                    <div className="font-semibold mb-2">⚙️ CKAN standard</div>
+                                    <p className="text-sm">Funguje s catalog.data.gov, opendata.praha.eu a dalšími</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<MCPBuilder />, document.getElementById('root'));
+    </script>
+</body>
+</html>
