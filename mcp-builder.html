@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧩 MCP Builder - Auto-Generator ChatGPT Actions</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .code-block {
+            background: #1e1e1e;
+            border-radius: 8px;
+            overflow: auto;
+            max-height: 500px;
+        }
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState } = React;
+
+        function MCPBuilder() {
+            const [url, setUrl] = useState('https://api.opendata.praha.eu/lod');
+            const [authType, setAuthType] = useState('none');
+            const [defaultFormat, setDefaultFormat] = useState('json');
+            const [name, setName] = useState('');
+            const [description, setDescription] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [result, setResult] = useState(null);
+            const [error, setError] = useState(null);
+            const [validationMessages, setValidationMessages] = useState([]);
+
+            const detectEndpoints = (baseUrl) => {
+                const endpoints = ['/catalog', '/dataset', '/organization', '/distribution'];
+                return endpoints;
+            };
+
+            const analyzeAPI = async (apiUrl) => {
+                const messages = [];
+                const endpoints = detectEndpoints(apiUrl);
+                const detectedPaths = {};
+
+                for (const endpoint of endpoints) {
+                    try {
+                        const testUrl = `${apiUrl}${endpoint}?format=${defaultFormat}&limit=1`;
+                        messages.push(`🔍 Testuji endpoint: ${endpoint}...`);
+                        
+                        const response = await fetch(testUrl);
+                        
+                        if (response.ok) {
+                            const data = await response.json();
+                            messages.push(`✅ ${endpoint} - OK (${response.status})`);
+                            
+                            detectedPaths[endpoint] = {
+                                status: response.status,
+                                data: data,
+                                isArray: Array.isArray(data)
+                            };
+                        } else {
+                            messages.push(`⚠️ ${endpoint} - ${response.status}`);
+                        }
+                    } catch (err) {
+                        messages.push(`❌ ${endpoint} - Chyba: ${err.message}`);
+                    }
+                }
+
+                return { detectedPaths, messages };
+            };
+
+            const generateOpenAPISpec = (apiUrl, detectedPaths, customName, customDescription) => {
+                const spec = {
+                    openapi: "3.1.0",
+                    info: {
+                        title: customName || "LKOD MCP Server",
+                        description: customDescription || "MCP server pro přístup k otevřeným datům (JSON režim)",
+                        version: "1.0.0"
+                    },
+                    "x-mcp": {
+                        name: customName?.toLowerCase().replace(/\s+/g, '_') || "lkod_api",
+                        description: customDescription || "LKOD MCP Server – přístup k otevřeným datům přes LKOD API (JSON režim)"
+                    },
+                    servers: [
+                        {
+                            url: apiUrl,
+                            description: "LKOD Open Data API - JSON režim"
+                        }
+                    ],
+                    paths: {}
+                };
+
+                // Catalog endpoint
+                if (detectedPaths['/catalog']) {
+                    spec.paths["/catalog"] = {
+                        get: {
+                            operationId: "getCatalogLKOD",
+                            summary: "Získat katalog otevřených dat",
+                            parameters: [
+                                {
+                                    name: "format",
+                                    in: "query",
+                                    schema: { 
+                                        type: "string", 
+                                        enum: [defaultFormat], 
+                                        default: defaultFormat 
+                                    },
+                                    required: true
+                                }
+                            ],
+                            responses: {
+                                "200": {
+                                    description: "Seznam všech datových sad v katalogu",
+                                    content: {
+                                        "application/json": {
+                                            schema: {
+                                                type: "object",
+                                                properties: {
+                                                    title: { type: "string" },
+                                                    datasets: { 
+                                                        type: "array", 
+                                                        items: { type: "string" } 
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    };
+                }
+
+                // Dataset endpoint
+                if (detectedPaths['/dataset']) {
+                    spec.paths["/dataset"] = {
+                        get: {
+                            operationId: "getDatasetListLKOD",
+                            summary: "Získat seznam datových sad (JSON formát)",
+                            parameters: [
+                                { 
+                                    name: "format", 
+                                    in: "query", 
+                                    required: true, 
+                                    schema: { 
+                                        type: "string", 
+                                        enum: [defaultFormat], 
+                                        default: defaultFormat 
+                                    } 
+                                },
+                                { 
+                                    name: "themes[]", 
+                                    in: "query", 
+                                    schema: { type: "string" },
+                                    description: "Filtrování podle témat"
+                                },
+                                { 
+                                    name: "publisher", 
+                                    in: "query", 
+                                    schema: { type: "string" },
+                                    description: "Filtrování podle poskytovatele"
+                                },
+                                { 
+                                    name: "limit", 
+                                    in: "query", 
+                                    schema: { type: "integer" },
+                                    description: "Počet výsledků na stránku"
+                                },
+                                { 
+                                    name: "offset", 
+                                    in: "query", 
+                                    schema: { type: "integer" },
+                                    description: "Offset pro stránkování"
+                                }
+                            ],
+                            responses: {
+                                "200": {
+                                    description: "Seznam datasetů",
+                                    content: {
+                                        "application/json": {
+                                            schema: {
+                                                type: "array",
+                                                items: {
+                                                    type: "object",
+                                                    properties: {
+                                                        iri: { type: "string" },
+                                                        title: { type: "string" },
+                                                        description: { type: "string" },
+                                                        theme: { type: "string" },
+                                                        publisher: { type: "string" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    };
+                }
+
+                // Organization endpoint
+                if (detectedPaths['/organization']) {
+                    spec.paths["/organization"] = {
+                        get: {
+                            operationId: "getOrganizationListLKOD",
+                            summary: "Získat seznam organizací",
+                            parameters: [
+                                { 
+                                    name: "format", 
+                                    in: "query", 
+                                    required: true, 
+                                    schema: { 
+                                        type: "string", 
+                                        enum: [defaultFormat], 
+                                        default: defaultFormat 
+                                    } 
+                                }
+                            ],
+                            responses: {
+                                "200": {
+                                    description: "Seznam organizací poskytujících data",
+                                    content: {
+                                        "application/json": {
+                                            schema: {
+                                                type: "array",
+                                                items: {
+                                                    type: "object",
+                                                    properties: {
+                                                        iri: { type: "string" },
+                                                        title: { type: "string" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    };
+                }
+
+                // Distribution endpoint
+                if (detectedPaths['/distribution']) {
+                    spec.paths["/distribution"] = {
+                        get: {
+                            operationId: "getDistributionListLKOD",
+                            summary: "Získat seznam distribucí datových sad",
+                            parameters: [
+                                { 
+                                    name: "format", 
+                                    in: "query", 
+                                    required: true, 
+                                    schema: { 
+                                        type: "string", 
+                                        enum: [defaultFormat], 
+                                        default: defaultFormat 
+                                    } 
+                                }
+                            ],
+                            responses: {
+                                "200": {
+                                    description: "Seznam distribucí",
+                                    content: {
+                                        "application/json": {
+                                            schema: {
+                                                type: "array",
+                                                items: {
+                                                    type: "object",
+                                                    properties: {
+                                                        iri: { type: "string" },
+                                                        accessURL: { type: "string" },
+                                                        mediaType: { type: "string" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    };
+                }
+
+                return spec;
+            };
+
+            const handleGenerate = async () => {
+                setLoading(true);
+                setError(null);
+                setResult(null);
+                setValidationMessages([]);
+
+                try {
+                    const cleanUrl = url.replace(/\/$/, '');
+                    const { detectedPaths, messages } = await analyzeAPI(cleanUrl);
+                    setValidationMessages(messages);
+
+                    if (Object.keys(detectedPaths).length === 0) {
+                        throw new Error('Nepodařilo se detekovat žádné funkční endpointy');
+                    }
+
+                    const spec = generateOpenAPISpec(cleanUrl, detectedPaths, name, description);
+                    setResult(spec);
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const copyToClipboard = () => {
+                navigator.clipboard.writeText(JSON.stringify(result, null, 2));
+                alert('✅ OpenAPI specifikace zkopírována do schránky!');
+            };
+
+            const downloadJSON = () => {
+                const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'mcp-server-spec.json';
+                a.click();
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 py-8 px-4">
+                    <div className="max-w-6xl mx-auto">
+                        {/* Header */}
+                        <div className="gradient-bg text-white rounded-2xl shadow-2xl p-8 mb-8">
+                            <h1 className="text-4xl font-bold mb-3">🧩 MCP Builder</h1>
+                            <p className="text-lg opacity-90">Auto-Generator ChatGPT Actions z veřejných API</p>
+                            <p className="text-sm opacity-75 mt-2">Automaticky vytvoří OpenAPI 3.1 specifikaci pro použití jako ChatGPT Action</p>
+                        </div>
+
+                        {/* Input Form */}
+                        <div className="bg-white rounded-2xl shadow-xl p-8 mb-8">
+                            <h2 className="text-2xl font-bold text-gray-800 mb-6">⚙️ Konfigurace</h2>
+                            
+                            <div className="space-y-5">
+                                {/* URL Input */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                        URL veřejného API *
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={url}
+                                        onChange={(e) => setUrl(e.target.value)}
+                                        placeholder="https://api.opendata.praha.eu/lod"
+                                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none transition"
+                                    />
+                                </div>
+
+                                {/* Name */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                        Název MCP serveru (volitelné)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={name}
+                                        onChange={(e) => setName(e.target.value)}
+                                        placeholder="LKOD MCP Server"
+                                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none transition"
+                                    />
+                                </div>
+
+                                {/* Description */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                        Popis (volitelné)
+                                    </label>
+                                    <textarea
+                                        value={description}
+                                        onChange={(e) => setDescription(e.target.value)}
+                                        placeholder="MCP server pro přístup k otevřeným datům..."
+                                        rows="3"
+                                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none transition"
+                                    />
+                                </div>
+
+                                {/* Auth Type & Format */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                            Autentizace
+                                        </label>
+                                        <select
+                                            value={authType}
+                                            onChange={(e) => setAuthType(e.target.value)}
+                                            className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none transition"
+                                        >
+                                            <option value="none">None</option>
+                                            <option value="bearer">Bearer Token</option>
+                                            <option value="apiKey">API Key</option>
+                                        </select>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                            Výchozí formát
+                                        </label>
+                                        <select
+                                            value={defaultFormat}
+                                            onChange={(e) => setDefaultFormat(e.target.value)}
+                                            className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none transition"
+                                        >
+                                            <option value="json">JSON</option>
+                                            <option value="jsonld">JSON-LD</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Generate Button */}
+                            <button
+                                onClick={handleGenerate}
+                                disabled={loading || !url}
+                                className="w-full mt-8 bg-gradient-to-r from-purple-600 to-blue-600 text-white font-bold py-4 px-6 rounded-lg hover:from-purple-700 hover:to-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+                            >
+                                {loading ? '🔄 Generuji...' : '🚀 Generovat MCP specifikaci'}
+                            </button>
+                        </div>
+
+                        {/* Loading */}
+                        {loading && (
+                            <div className="bg-white rounded-2xl shadow-xl p-8 mb-8 text-center">
+                                <div className="loader mx-auto mb-4"></div>
+                                <p className="text-gray-600">Analyzuji API a generuji specifikaci...</p>
+                            </div>
+                        )}
+
+                        {/* Validation Messages */}
+                        {validationMessages.length > 0 && (
+                            <div className="bg-white rounded-2xl shadow-xl p-8 mb-8">
+                                <h3 className="text-xl font-bold text-gray-800 mb-4">📋 Validace API</h3>
+                                <div className="space-y-2 font-mono text-sm">
+                                    {validationMessages.map((msg, idx) => (
+                                        <div key={idx} className="text-gray-700">{msg}</div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Error */}
+                        {error && (
+                            <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-6 mb-8">
+                                <h3 className="text-xl font-bold text-red-800 mb-2">❌ Chyba</h3>
+                                <p className="text-red-700">{error}</p>
+                            </div>
+                        )}
+
+                        {/* Result */}
+                        {result && (
+                            <div className="bg-white rounded-2xl shadow-xl p-8">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="text-2xl font-bold text-gray-800">✅ OpenAPI 3.1 Specifikace</h3>
+                                    <div className="flex gap-3">
+                                        <button
+                                            onClick={copyToClipboard}
+                                            className="bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700 transition font-semibold shadow"
+                                        >
+                                            📋 Kopírovat
+                                        </button>
+                                        <button
+                                            onClick={downloadJSON}
+                                            className="bg-green-600 text-white px-5 py-2 rounded-lg hover:bg-green-700 transition font-semibold shadow"
+                                        >
+                                            💾 Stáhnout JSON
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="code-block p-6">
+                                    <pre className="text-green-400 text-sm overflow-x-auto">
+                                        {JSON.stringify(result, null, 2)}
+                                    </pre>
+                                </div>
+
+                                <div className="mt-6 p-6 bg-blue-50 rounded-lg border-2 border-blue-200">
+                                    <h4 className="font-bold text-blue-900 mb-3">💡 Jak použít v ChatGPT:</h4>
+                                    <ol className="list-decimal list-inside space-y-2 text-blue-800">
+                                        <li>Zkopírujte nebo stáhněte JSON specifikaci</li>
+                                        <li>V ChatGPT otevřete nastavení Actions</li>
+                                        <li>Klikněte na "Přidat vlastní akci"</li>
+                                        <li>Vložte JSON do pole "Schema"</li>
+                                        <li>Uložte a otestujte</li>
+                                    </ol>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Info Box */}
+                        <div className="mt-8 bg-gradient-to-r from-purple-100 to-blue-100 rounded-2xl p-8 border-2 border-purple-200">
+                            <h3 className="text-xl font-bold text-purple-900 mb-4">🧠 Co aplikace dělá?</h3>
+                            <div className="grid md:grid-cols-2 gap-4 text-purple-900">
+                                <div>
+                                    <div className="font-semibold mb-2">🔍 Auto detekce API endpointů</div>
+                                    <p className="text-sm">/catalog, /dataset, /organization, /distribution</p>
+                                </div>
+                                <div>
+                                    <div className="font-semibold mb-2">🧩 Generace MCP specifikace</div>
+                                    <p className="text-sm">OpenAPI 3.1 + x-mcp metadata</p>
+                                </div>
+                                <div>
+                                    <div className="font-semibold mb-2">💬 Výstup pro ChatGPT</div>
+                                    <p className="text-sm">Okamžitě použitelný jako Custom Action</p>
+                                </div>
+                                <div>
+                                    <div className="font-semibold mb-2">⚙️ Detekce JSON/JSON-LD</div>
+                                    <p className="text-sm">Automatické přidání format=json</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<MCPBuilder />, document.getElementById('root'));
+    </script>
+</body>
+</html>
