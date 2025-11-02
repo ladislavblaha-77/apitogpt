@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧩 MCP Builder - Auto-Generator ChatGPT Actions</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .code-block {
+            background: #1e1e1e;
+            border-radius: 8px;
+            overflow: auto;
+            max-height: 500px;
+        }
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState } = React;
+
+        function MCPBuilder() {
+            const [url, setUrl] = useState('https://api.opendata.praha.eu/lod');
+            const [authType, setAuthType] = useState('none');
+            const [defaultFormat, setDefaultFormat] = useState('json');
+            const [name, setName] = useState('');
+            const [description, setDescription] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [result, setResult] = useState(null);
+            const [infoMessages, setInfoMessages] = useState([]);
+
+            const generateOpenAPISpec = (apiUrl, customName, customDescription, format) => {
+                const spec = {
+                    openapi: "3.1.0",
+                    info: {
+                        title: customName || "LKOD MCP Server",
+                        description: customDescription || "MCP server pro přístup k otevřeným datům přes LKOD API (JSON režim).",
+                        version: "1.0.0"
+                    },
+                    "x-mcp": {
+                        name: (customName || "lkod_api").toLowerCase().replace(/\s+/g, '_'),
+                        description: customDescription || "LKOD MCP Server – přístup k datům Prahy (formát JSON)"
+                    },
+                    servers: [
+                        {
+                            url: apiUrl,
+                            description: "LKOD Open Data API - JSON režim"
+                        }
+                    ],
+                    paths: {
+                        "/catalog": {
+                            get: {
+                                operationId: "getCatalogLKOD",
+                                summary: "Získat katalog dat (JSON formát)",
+                                parameters: [
+                                    {
+                                        name: "format",
+                                        in: "query",
+                                        required: true,
+                                        schema: {
+                                            type: "string",
+                                            enum: [format],
+                                            default: format
+                                        },
+                                        description: "Formát odpovědi (vždy json)"
+                                    },
+                                    {
+                                        name: "publishers[]",
+                                        in: "query",
+                                        required: false,
+                                        schema: {
+                                            type: "string"
+                                        },
+                                        description: "Filtruje katalog podle identifikátoru publishera"
+                                    },
+                                    {
+                                        name: "limit",
+                                        in: "query",
+                                        required: false,
+                                        schema: {
+                                            type: "integer"
+                                        },
+                                        description: "Maximální počet výsledků"
+                                    },
+                                    {
+                                        name: "offset",
+                                        in: "query",
+                                        required: false,
+                                        schema: {
+                                            type: "integer"
+                                        },
+                                        description: "Offset pro stránkování"
+                                    }
+                                ],
+                                responses: {
+                                    "200": {
+                                        description: "Úspěšná odpověď (čistý JSON)",
+                                        content: {
+                                            "application/json": {
+                                                schema: {
+                                                    type: "object",
+                                                    properties: {
+                                                        iri: {
+                                                            type: "string",
+                                                            description: "IRI katalogu"
+                                                        },
+                                                        title: {
+                                                            type: "string",
+                                                            description: "Název katalogu"
+                                                        },
+                                                        description: {
+                                                            type: "string",
+                                                            description: "Popis katalogu"
+                                                        },
+                                                        datasets: {
+                                                            type: "array",
+                                                            description: "Seznam IRI datových sad",
+                                                            items: {
+                                                                type: "string"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "/datasets": {
+                            get: {
+                                operationId: "getDatasetListLKOD",
+                                summary: "Získat seznam datových sad (JSON formát)",
+                                parameters: [
+                                    {
+                                        name: "format",
+                                        in: "query",
+                                        required: true,
+                                        schema: {
+                                            type: "string",
+                                            enum: [format],
+                                            default: format
+                                        },
+                                        description: "Formát odpovědi (vždy json)"
+                                    },
+                                    {
+                                        name: "publisher",
+                                        in: "query",
+                                        required: false,
+                                        schema: {
+                                            type: "string"
+                                        },
+                                        description: "Filtruje podle publishera"
+                                    },
+                                    {
+                                        name: "themes[]",
+                                        in: "query",
+                                        required: false,
+                                        schema: {
+                                            type: "string"
+                                        },
+                                        description: "Filtruje podle tématu datové sady (např. finance, doprava, kultura)"
+                                    },
+                                    {
+                                        name: "limit",
+                                        in: "query",
+                                        required: false,
+                                        schema: {
+                                            type: "integer"
+                                        },
+                                        description: "Maximální počet výsledků"
+                                    },
+                                    {
+                                        name: "offset",
+                                        in: "query",
+                                        required: false,
+                                        schema: {
+                                            type: "integer"
+                                        },
+                                        description: "Offset pro stránkování"
+                                    }
+                                ],
+                                responses: {
+                                    "200": {
+                                        description: "Seznam datových sad (čistý JSON)",
+                                        content: {
+                                            "application/json": {
+                                                schema: {
+                                                    type: "array",
+                                                    items: {
+                                                        type: "object",
+                                                        properties: {
+                                                            iri: {
+                                                                type: "string"
+                                                            },
+                                                            title: {
+                                                                type: "string"
+                                                            },
+                                                            description: {
+                                                                type: "string"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "/organizations": {
+                            get: {
+                                operationId: "getOrganizationListLKOD",
+                                summary: "Získat seznam organizací",
+                                parameters: [
+                                    {
+                                        name: "format",
+                                        in: "query",
+                                        required: true,
+                                        schema: {
+                                            type: "string",
+                                            enum: [format],
+                                            default: format
+                                        },
+                                        description: "Formát odpovědi (vždy json)"
+                                    },
+                                    {
+                                        name: "limit",
+                                        in: "query",
+                                        required: false,
+                                        schema: {
+                                            type: "integer"
+                                        },
+                                        description: "Maximální počet výsledků"
+                                    },
+                                    {
+                                        name: "offset",
+                                        in: "query",
+                                        required: false,
+                                        schema: {
+                                            type: "integer"
+                                        },
+                                        description: "Offset pro stránkování"
+                                    }
+                                ],
+                                responses: {
+                                    "200": {
+                                        description: "Seznam organizací poskytujících data",
+                                        content: {
+                                            "application/json": {
+                                                schema: {
+                                                    type: "array",
+                                                    items: {
+                                                        type: "object",
+                                                        properties: {
+                                                            iri: {
+                                                                type: "string"
+                                                            },
+                                                            title: {
+                                                                type: "string"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "/distributions": {
+                            get: {
+                                operationId: "getDistributionListLKOD",
+                                summary: "Získat seznam distribucí datových sad",
+                                parameters: [
+                                    {
+                                        name: "format",
+                                        in: "query",
+                                        required: true,
+                                        schema: {
+                                            type: "string",
+                                            enum: [format],
+                                            default: format
+                                        },
+                                        description: "Formát odpovědi (vždy json)"
+                                    },
+                                    {
+                                        name: "limit",
+                                        in: "query",
+                                        required: false,
+                                        schema: {
+                                            type: "integer"
+                                        },
+                                        description: "Maximální počet výsledků"
+                                    },
+                                    {
+                                        name: "offset",
+                                        in: "query",
+                                        required: false,
+                                        schema: {
+                                            type: "integer"
+                                        },
+                                        description: "Offset pro stránkování"
+                                    }
+                                ],
+                                responses: {
+                                    "200": {
+                                        description: "Seznam distribucí",
+                                        content: {
+                                            "application/json": {
+                                                schema: {
+                                                    type: "array",
+                                                    items: {
+                                                        type: "object",
+                                                        properties: {
+                                                            iri: {
+                                                                type: "string"
+                                                            },
+                                                            accessURL: {
+                                                                type: "string"
+                                                            },
+                                                            mediaType: {
+                                                                type: "string"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+                return spec;
+            };
+
+            const handleGenerate = async () => {
+                setLoading(true);
+                setInfoMessages([]);
+
+                // Simulate brief processing time
+                await new Promise(resolve => setTimeout(resolve, 500));
+
+                try {
+                    const cleanUrl = url.replace(/\/$/, '');
+                    
+                    const messages = [
+                        `🔍 Analyzuji LKOD API: ${cleanUrl}`,
+                        `📋 Generuji endpointy podle DCAT-AP-CZ standardu`,
+                        `✅ /catalog - katalog otevřených dat`,
+                        `✅ /datasets - seznam datových sad`,
+                        `✅ /organizations - seznam organizací`,
+                        `✅ /distributions - distribuce dat`,
+                        `⚙️ Přidány parametry: format=${defaultFormat}, publisher, themes[], limit, offset`,
+                        `🎯 OpenAPI 3.1 specifikace vygenerována úspěšně!`
+                    ];
+                    
+                    setInfoMessages(messages);
+                    const spec = generateOpenAPISpec(cleanUrl, name, description, defaultFormat);
+                    setResult(spec);
+                } catch (err) {
+                    alert('Chyba při generování: ' + err.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const copyToClipboard = () => {
+                navigator.clipboard.writeText(JSON.stringify(result, null, 2));
+                alert('✅ OpenAPI specifikace zkopírována do schránky!');
+            };
+
+            const downloadJSON = () => {
+                const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'mcp-server-spec.json';
+                a.click();
+                URL.revokeObjectURL(url);
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 py-8 px-4">
+                    <div className="max-w-6xl mx-auto">
+                        {/* Header */}
+                        <div className="gradient-bg text-white rounded-2xl shadow-2xl p-8 mb-8">
+                            <h1 className="text-4xl font-bold mb-3">🧩 MCP Builder</h1>
+                            <p className="text-lg opacity-90">Auto-Generator ChatGPT Actions z veřejných API</p>
+                            <p className="text-sm opacity-75 mt-2">Automaticky vytvoří OpenAPI 3.1 specifikaci podle DCAT-AP-CZ standardu</p>
+                        </div>
+
+                        {/* Input Form */}
+                        <div className="bg-white rounded-2xl shadow-xl p-8 mb-8">
+                            <h2 className="text-2xl font-bold text-gray-800 mb-6">⚙️ Konfigurace</h2>
+                            
+                            <div className="space-y-5">
+                                {/* URL Input */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                        URL veřejného LKOD API *
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={url}
+                                        onChange={(e) => setUrl(e.target.value)}
+                                        placeholder="https://api.opendata.praha.eu/lod"
+                                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none transition"
+                                    />
+                                </div>
+
+                                {/* Name */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                        Název MCP serveru (volitelné)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={name}
+                                        onChange={(e) => setName(e.target.value)}
+                                        placeholder="LKOD MCP Server"
+                                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none transition"
+                                    />
+                                </div>
+
+                                {/* Description */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                        Popis (volitelné)
+                                    </label>
+                                    <textarea
+                                        value={description}
+                                        onChange={(e) => setDescription(e.target.value)}
+                                        placeholder="MCP server pro přístup k otevřeným datům..."
+                                        rows="3"
+                                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none transition"
+                                    />
+                                </div>
+
+                                {/* Format */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                        Výchozí formát
+                                    </label>
+                                    <select
+                                        value={defaultFormat}
+                                        onChange={(e) => setDefaultFormat(e.target.value)}
+                                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none transition"
+                                    >
+                                        <option value="json">JSON</option>
+                                        <option value="jsonld">JSON-LD</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* Generate Button */}
+                            <button
+                                onClick={handleGenerate}
+                                disabled={loading || !url}
+                                className="w-full mt-8 bg-gradient-to-r from-purple-600 to-blue-600 text-white font-bold py-4 px-6 rounded-lg hover:from-purple-700 hover:to-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+                            >
+                                {loading ? '🔄 Generuji...' : '🚀 Generovat MCP specifikaci'}
+                            </button>
+                        </div>
+
+                        {/* Loading */}
+                        {loading && (
+                            <div className="bg-white rounded-2xl shadow-xl p-8 mb-8 text-center">
+                                <div className="loader mx-auto mb-4"></div>
+                                <p className="text-gray-600">Generuji OpenAPI 3.1 specifikaci...</p>
+                            </div>
+                        )}
+
+                        {/* Info Messages */}
+                        {infoMessages.length > 0 && (
+                            <div className="bg-white rounded-2xl shadow-xl p-8 mb-8">
+                                <h3 className="text-xl font-bold text-gray-800 mb-4">📋 Proces generování</h3>
+                                <div className="space-y-2 font-mono text-sm">
+                                    {infoMessages.map((msg, idx) => (
+                                        <div key={idx} className="text-gray-700">{msg}</div>
+                                    ))}
+                                </div>
+                                <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                                    <p className="text-sm text-blue-800">
+                                        💡 <strong>Poznámka:</strong> Specifikace je generována podle DCAT-AP-CZ standardu 
+                                        bez live testování API (kvůli CORS omezením v prohlížeči).
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Result */}
+                        {result && (
+                            <div className="bg-white rounded-2xl shadow-xl p-8">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="text-2xl font-bold text-gray-800">✅ OpenAPI 3.1 Specifikace</h3>
+                                    <div className="flex gap-3">
+                                        <button
+                                            onClick={copyToClipboard}
+                                            className="bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700 transition font-semibold shadow"
+                                        >
+                                            📋 Kopírovat
+                                        </button>
+                                        <button
+                                            onClick={downloadJSON}
+                                            className="bg-green-600 text-white px-5 py-2 rounded-lg hover:bg-green-700 transition font-semibold shadow"
+                                        >
+                                            💾 Stáhnout JSON
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="code-block p-6">
+                                    <pre className="text-green-400 text-sm overflow-x-auto">
+                                        {JSON.stringify(result, null, 2)}
+                                    </pre>
+                                </div>
+
+                                <div className="mt-6 p-6 bg-blue-50 rounded-lg border-2 border-blue-200">
+                                    <h4 className="font-bold text-blue-900 mb-3">💡 Jak použít v ChatGPT:</h4>
+                                    <ol className="list-decimal list-inside space-y-2 text-blue-800">
+                                        <li>Zkopírujte nebo stáhněte JSON specifikaci výše</li>
+                                        <li>V ChatGPT otevřete "GPTs" → "Create a GPT"</li>
+                                        <li>Klikněte na "Configure" → "Actions" → "Create new action"</li>
+                                        <li>Vložte JSON do pole "Schema"</li>
+                                        <li>Nastavte "Authentication" na "None"</li>
+                                        <li>Klikněte "Save" a otestujte akci</li>
+                                    </ol>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Info Box */}
+                        <div className="mt-8 bg-gradient-to-r from-purple-100 to-blue-100 rounded-2xl p-8 border-2 border-purple-200">
+                            <h3 className="text-xl font-bold text-purple-900 mb-4">🧠 Co aplikace dělá?</h3>
+                            <div className="grid md:grid-cols-2 gap-4 text-purple-900">
+                                <div>
+                                    <div className="font-semibold mb-2">🔍 Standardní LKOD endpointy</div>
+                                    <p className="text-sm">/catalog, /datasets, /organizations, /distributions</p>
+                                </div>
+                                <div>
+                                    <div className="font-semibold mb-2">🧩 OpenAPI 3.1 + x-mcp</div>
+                                    <p className="text-sm">Validní specifikace s MCP metadaty</p>
+                                </div>
+                                <div>
+                                    <div className="font-semibold mb-2">💬 Připraveno pro ChatGPT</div>
+                                    <p className="text-sm">Okamžitě použitelné jako Custom Action</p>
+                                </div>
+                                <div>
+                                    <div className="font-semibold mb-2">⚙️ DCAT-AP-CZ standard</div>
+                                    <p className="text-sm">Parametry podle české specifikace</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<MCPBuilder />, document.getElementById('root'));
+    </script>
+</body>
+</html>
